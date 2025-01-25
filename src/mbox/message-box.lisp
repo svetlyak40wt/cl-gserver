@@ -208,8 +208,8 @@ This function sets the result as `handler-result' in `item'. The return of this 
       msgbox
     (bt2:with-lock-held (thread-lock)
       (unless (bt2:thread-alive-p queue-thread)
-        (log:trace "Restarting thread ~A"
-                   (bt2:thread-name queue-thread))
+        (log:warn "Restarting thread ~A"
+                  (bt2:thread-name queue-thread))
         (start-thread msgbox
                       :thread-name (bt2:thread-name queue-thread)))
       (values))))
@@ -270,6 +270,7 @@ The submitting code has to await the side-effect and possibly handle a timeout."
                     :handler-fun-args handler-fun-args)))
     (log:trace "~a: pushing item to queue: ~a" (name msgbox) push-item)
     (queue:pushq queue push-item)
+    (ensure-thread-is-running msgbox)
     t))
 
 (defmethod stop ((self message-box/bt) &optional (wait nil))
