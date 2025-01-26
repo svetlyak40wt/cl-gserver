@@ -114,9 +114,10 @@ This is used to break the environment possibly captured as closure at 'submit' s
   ((queue-thread :initform nil
                  :documentation
                  "The thread that pops queue items.")
-   (thread-lock :initform (bt2:make-lock)
-                :documentation
-                "A lock which should be taken when queue-thread slot is set."))
+   (thread-is-died-p :initform nil
+                     :type boolean
+                     :documentation
+                     "Will be set to T if processing loop will be broken because of an error or a restart invocation."))
   (:documentation
    "Bordeaux-Threads based message-box with a single thread operating on a message queue.
 This is used when the actor is created using a `:pinned` dispatcher type.
@@ -129,15 +130,18 @@ this kind of queue because each message-box (and with that each actor) requires 
                 start-thread))
 
 (defun start-thread (msgbox &key thread-name)
-  (with-slots (name queue-thread)
+  (with-slots (name queue-thread thread-is-died-p)
       msgbox
     (flet ((run-processing-loop ()
-             (message-processing-loop msgbox)))
+             (unwind-protect
+                  (message-processing-loop msgbox)
+               (setf thread-is-died-p
+                     t))))
       (setf queue-thread
-            (bt2:make-thread
-             #'run-processing-loop
-             :name (or thread-name
-                       (mkstr "message-thread-" name))))))
+            (bt2:make-thread #'run-processing-loop
+                             :name (or thread-name
+                                       (mkstr "message-thread-" name))))
+      (setf thread-is-died-p nil)))
   (values))
 
 
@@ -204,15 +208,16 @@ This function sets the result as `handler-result' in `item'. The return of this 
                 ensure-thread-is-running))
 
 (defun ensure-thread-is-running (msgbox)
-  (with-slots (queue-thread thread-lock)
+  (with-slots (queue-thread thread-is-died-p)
       msgbox
-    (bt2:with-lock-held (thread-lock)
+    (when thread-is-died-p
+      ;; Just to be sure that thread is not alive:
       (unless (bt2:thread-alive-p queue-thread)
-        (log:warn "Restarting thread ~A"
-                  (bt2:thread-name queue-thread))
-        (start-thread msgbox
-                      :thread-name (bt2:thread-name queue-thread)))
-      (values))))
+        (let ((thread-name (bt2:thread-name queue-thread)))
+          (log:warn "Restarting thread" thread-name)
+          (start-thread msgbox
+                        :thread-name thread-name))))
+    (values)))
  
 
 (defmethod submit ((self message-box/bt) message withreply-p time-out handler-fun-args)
