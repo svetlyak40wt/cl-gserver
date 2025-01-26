@@ -218,7 +218,6 @@ This function sets the result as `handler-result' in `item'. The return of this 
           (start-thread msgbox
                         :thread-name thread-name))))
     (values)))
- 
 
 (defmethod submit ((self message-box/bt) message withreply-p time-out handler-fun-args)
   "The `handler-fun-args` argument must contain a handler function as first list item.
@@ -241,27 +240,21 @@ It will be apply'ed with the rest of the args when the message was 'popped' from
                      :time-out time-out
                      :handler-fun-args handler-fun-args
                      :handler-result 'no-result)))
-    (cond
-      (time-out
-       (bt2:with-lock-held (withreply-lock)
-         (log:trace "~a: pushing item to queue: ~a" (name msgbox) push-item)
-         (queue:pushq queue push-item)
-         (ensure-thread-is-running msgbox))
+    
+    (bt2:with-lock-held (withreply-lock)
+      (log:trace "~a: pushing item to queue: ~a" (name msgbox) push-item)
+      (queue:pushq queue push-item)
+      (ensure-thread-is-running msgbox)
 
-       ;; It is important to leave lock withreply-lock
-       ;; before we will wait for result. Otherwisee handler-fun
-       ;; will not be able to do it's job:
-       (log:trace "~a: withreply: waiting for arrival of result..." (name msgbox))
-       (wait-and-probe-for-msg-handler-result msgbox push-item))
-      (t
-       (bt2:with-lock-held (withreply-lock)
-         (log:trace "~a: pushing item to queue: ~a" (name msgbox) push-item)
-         (queue:pushq queue push-item)
-         (ensure-thread-is-running msgbox)
-
-         (log:trace "~a: withreply: waiting for arrival of result..." (name msgbox))
-         (bt2:condition-wait withreply-cvar withreply-lock))))
-
+      (log:trace "~a: withreply: waiting for arrival of result..." (name msgbox))
+      
+      (unless (bt2:condition-wait withreply-cvar withreply-lock
+                                  :timeout time-out)
+        (log:warn "~a: time-out elapsed but result not available yet!" (name msgbox))
+        (setf (slot-value push-item 'cancelled-p) t)
+        (error 'ask-timeout
+               :wait-time time-out)))
+    
     (with-slots (handler-result) push-item
       (log:trace "~a: withreply: result should be available: ~a" (name msgbox) handler-result)
       handler-result)))
